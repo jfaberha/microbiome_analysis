@@ -601,7 +601,9 @@ ggplot(
 #calculate measures per sample and join with GSI and BC values to check for correlations
 #add more variables to your table to check for more correlations with diversity
 richness <- estimate_richness(phyloseq_data_norarify, split = TRUE, measures = NULL)
-richness <- cbind(richness, treat_c = meta_table$treat_c, stock = meta_table$stock, GSI = meta_table$GSI, BC = meta_table$BC, depth = meta_table$depth, check = meta_table$check)
+faith <- pd(t(otufile), ep_tree, include.root=FALSE)
+faith_rar <- pd(otur, ep_tree, include.root=FALSE)
+richness <- cbind(richness, Faith_norar = faith$PD, Faith_rar = faith_rar$PD, treat_c = meta_table$treat_c, stock = meta_table$stock, GSI = meta_table$GSI, BC = meta_table$BC, depth = meta_table$depth, check = meta_table$check)
 richness
 # write table with diversity stats
 write.table(richness, file = "richness.txt", sep = "\t")
