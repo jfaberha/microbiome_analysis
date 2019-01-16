@@ -1,6 +1,6 @@
 #############################################################################
 #   Microbiome analysis for brooding, release, fed, and starved A. burtoni  #
-#            Last updated 10/10/2017 by Josh Faber-Hammond                  #
+#             Last updated 1/15/2019 by Josh Faber-Hammond                  #
 # See associated manuscript for more details about the analysis and results #
 #############################################################################
 
@@ -64,11 +64,12 @@ library(Hmisc)
 library(mgcv)
 #install.packages("picante")
 library(picante)
+library(RColorBrewer)
 
 theme_set(theme_bw())
 set.seed(42)
 
-std <- function(x) sd(x)/sqrt(length(x))
+ste <- function(x) sd(x)/sqrt(length(x))
 
 calculate_rarefaction_curves <- function(psdata, measures, depths) {
   require('plyr') # ldply
@@ -277,27 +278,34 @@ findElbow <- function(y, plot = FALSE, returnIndex = TRUE) {
   
 } # end of findElbow
 
+# End of loading helper functions
+
 ############################### Begin by importing input files and normalizing data for comparison of samples ################################
 
 #############################
 ## Create Phyloseq object  ##
 #############################
 setwd("/Volumes/Renn_RNAseq_2017/microbiome_2017_stomach/R")
+
+# Load OTU table
 otufile <- read.table("phyloseq_OTUtable_SILVA.txt", header = TRUE, row.names=1)
 ## just import and then tell phyloseq that these are the files that it is looking for
 
+# Load metadata
 #mapfile <- read.table("phyloseq_meta.txt", sep = "\t", header = TRUE, row.names=1)
 mapfile <- read.csv("phyloseq_meta_small_SILVA.csv", sep = ",", header = TRUE, row.names=1)
 # phyloseq needs rownames
 meta_table<-sample_data(mapfile)
 head(mapfile)
-head(meta_table) ## they look the same
+head(meta_table) ## they should look the same
 
+# Load taxa table
 ep_tax<-read.table("phyloseq_taxa_SILVA.txt",header=TRUE, sep = "\t", row.names=1) 
 # phyloseq needs rownames
 ep_tax <- as.matrix(ep_tax)  # coerce to matrix
 ep_tax <- tax_table(ep_tax)
 
+# Load tree
 ep_tree<-read.tree("filtered_seqs_min5_otus_SILVAannot_fasttree.tre")  # must be a rooted tree for phyloseq
 ep_tree_rooted <-midpoint(ep_tree) # this is from phanghorn package that sets root to midpoint
 
@@ -319,8 +327,6 @@ phyloseq_data <- phyloseq(otu, meta_table, ep_tax,ep_tree_rooted)
 otu <- otu_table(otufile, taxa_are_rows = TRUE)  # transpose back just to use commands
 phyloseq_data_norarify <- phyloseq(otu, meta_table, ep_tax, ep_tree_rooted)
 
-
-
 ##################################################
 #     Variance stabilizing normalization and     #
 # differential abundance analysis through DESeq2 #
@@ -341,7 +347,7 @@ diagdds = DESeq(phyloseq_ds, test="Wald", fitType="parametric", betaPrior=TRUE)
 # To extract results, choose the variable of interest and the pair of groups you want to test
 # To run all pairwise comparisons you need to enter all comparisons and rerun
 # Cooks Cutoff dictates whether or not you want to remove outliers
-res <- results( diagdds, contrast = c("treat_c", "B02", "R14"), cooksCutoff = FALSE )
+res <- results( diagdds, contrast = c("treat_c", "B02", "B14"), cooksCutoff = FALSE )
 
 # Filter for your desired alpha value, and extract relevant taxon names
 alpha = 0.05
@@ -490,6 +496,13 @@ microB_subset <- noNA_ds2
 metaD = as(sample_data(microB_subset), "data.frame")
 phydist = distance(microB_subset, "wunifrac")
 
+#Run goodness of fit tests for relevant variables to see which best explain beta diversity
+metaD2 <- cbind.data.frame(row.names = row.names(metaD), treat_c = metaD$treat_c, stock = metaD$stock, GSI = metaD$GSI, BC = metaD$BC, treat_tank = metaD$treat_tank)
+ef <- envfit(phydist, metaD2, permu = 999)
+ef
+#treatment group is the only significant variable
+
+
 #ANOSIM, fit data to single variable groupings/distributions
 #This tests whether two or more groups of samples are significantly different
 #This is not the recommended test for multi-variate data and is slightly outdated anyway.
@@ -516,8 +529,8 @@ anosim_res
 
 #PERMANOVA by different variable groups
 #This tests for differences in centroids in multidimensional matrix
-#Make sure you are using one of the "noNA..." datasets as your subset. This will eliminate NA values for all tested variables.
-adonis_res <- adonis2(formula = phydist ~ metaD$treat_c * metaD$stock * metaD$GSI * metaD$BC * metaD$treat_tank, data = metaD) 
+#Make sure you are using one of the "noNA..." datasets as your subset ("no_NA_ds2" used for MS). This will eliminate NA values for all tested variables.
+adonis_res <- adonis2(formula = phydist ~ metaD$treat_c * metaD$stock * metaD$GSI * metaD$treat_tank, data = metaD) 
 adonis_res # this is the primary multi-variate analysis used in the manuscript. Others are exploratory.
 adonis_res <- adonis2(formula = phydist ~ metaD$treat_c * metaD$treat_tank, data = metaD) 
 adonis_res
@@ -532,7 +545,7 @@ adonis_res
 adonis_res <- adonis2(formula = phydist ~ metaD$BC, data = metaD) 
 adonis_res
 adonis_res <- adonis2(formula = phydist ~ metaD$treat_tank, data = metaD) 
-adonis_res #data shows tank system as significant variable, but not when checked in multi-variate formula that includes treatment group, which is proper use of PERMANOVA.
+adonis_res #data shows tank system as significant variable, but not when checked in multi-variate formula that includes treatment group, (multivariate analysis is intended use of PERMANOVA).
 adonis_res <- adonis2(formula = phydist ~ metaD$source_tank, data = metaD) 
 adonis_res
 adonis_res <- adonis2(formula = phydist ~ metaD$treat_tank_orig, data = metaD) 
@@ -573,9 +586,9 @@ permutest(beta)
 ################################################### alpha diversity ############################################################
 
 #create rarefaction curve figure reflecting both observed number of OTUs and alpha diversity
-rarefaction_curve_data <- calculate_rarefaction_curves(phyloseq_data_norarify, c('Observed', 'Shannon'), rep(c(1, 10, 100, 500, 1000, 2000, 3000, 4000, 5000, 7500, 10000, 1:100 * 10000), each = 10))
+rarefaction_curve_data <- phyloseq:calculate_rarefaction_curves(phyloseq_data_norarify, c('Observed', 'Shannon'), rep(c(1, 10, 100, 500, 1000, 2000, 3000, 4000, 5000, 7500, 10000, 1:100 * 10000), each = 10))
 summary(rarefaction_curve_data)
-rarefaction_curve_data_summary <- ddply(rarefaction_curve_data, c('Depth', 'Sample', 'Measure'), summarise, Alpha_diversity_mean = mean(Alpha_diversity), Alpha_diversity_se = std(Alpha_diversity))
+rarefaction_curve_data_summary <- ddply(rarefaction_curve_data, c('Depth', 'Sample', 'Measure'), summarise, Alpha_diversity_mean = mean(Alpha_diversity), Alpha_diversity_se = ste(Alpha_diversity))
 rarefaction_curve_data_summary_verbose <- merge(rarefaction_curve_data_summary, data.frame(sample_data(phyloseq_data)), by.x = 'Sample', by.y = 'row.names')
 
 ggplot(
@@ -602,277 +615,132 @@ ggplot(
 #add more variables to your table to check for more correlations with diversity
 richness <- estimate_richness(phyloseq_data_norarify, split = TRUE, measures = NULL)
 faith <- pd(t(otufile), ep_tree, include.root=FALSE)
-faith_rar <- pd(otur, ep_tree, include.root=FALSE)
-richness <- cbind(richness, Faith_norar = faith$PD, Faith_rar = faith_rar$PD, treat_c = meta_table$treat_c, stock = meta_table$stock, GSI = meta_table$GSI, BC = meta_table$BC, depth = meta_table$depth, check = meta_table$check)
-richness
-# write table with diversity stats
-write.table(richness, file = "richness.txt", sep = "\t")
-
-#to actually test correlations between all fields in the diversity table, make sure your dataset has no "NA" values
-#filter samples by subset function prior to correlation check
-richness_mat <- as.matrix(subset(richness,richness$check == "y"))
-richness_mat <- subset(richness_mat, select=-c(check,stock,treat_c))
-rcorr(richness_mat)
-
-#plot alpha diversity stats
-#works best with rarified dataset
-microB_subset <- phyloseq_data # rarified dataset
-
-#make boxplot of alpha diversity stats for treatment group
-p = plot_richness(microB_subset, x = "treat_c",
-                  title = NULL, scales = "free_y", nrow = 1, shsi = NULL,
-                  measures = c("Observed", "Shannon"), sortby = NULL)
-p + geom_boxplot(data = p$microB_subset, aes(x = treat_c, y = value, color = NULL), alpha = 0.1)
-
-
-###############################################
-# Better way to estimate alpha diverstiy:     #
-# Perform multiple iterations of rarification #
-# before calulating diversity stats           #
-###############################################
 
 # Initialize matrices to store richness and evenness estimates
 # Make sure subset is your unrarified dataset
-microB_subset_norarify <- phyloseq_data_norarify
-min_lib <- min(sample_sums(microB_subset_norarify))
-nsamp = nsamples(microB_subset_norarify)
+min_lib <- min(sample_sums(phyloseq_data_norarify))
+nsamp = nsamples(phyloseq_data_norarify)
 trials = 100
 
-richness <- matrix(nrow = nsamp, ncol = trials)
-row.names(richness) <- sample_names(microB_subset_norarify)
-
-evenness <- matrix(nrow = nsamp, ncol = trials)
-row.names(evenness) <- sample_names(microB_subset_norarify)
-
-shannon <- matrix(nrow = nsamp, ncol = trials)
-row.names(shannon) <- sample_names(microB_subset_norarify)
-
-simpson <- matrix(nrow = nsamp, ncol = trials)
-row.names(simpson) <- sample_names(microB_subset_norarify)
-
-chao1 <- matrix(nrow = nsamp, ncol = trials)
-row.names(chao1) <- sample_names(microB_subset_norarify)
-chao1 <- rbind(chao1, chao1)
-
-faithPD <- matrix(nrow = nsamp, ncol = trials)
-row.names(faithPD) <- row.names(faith)
-
+SR <- matrix(nrow = nsamp, ncol = trials)
+row.names(SR) <- sample_names(phyloseq_data_norarify)
 
 # It is always important to set a seed when you subsample so your result is replicable 
 set.seed(3)
 
 for (i in 1:100) {
   # Subsample
-  r <- rarefy_even_depth(microB_subset_norarify, sample.size = min_lib, verbose = FALSE, replace = TRUE)
+  r <- rarefy_even_depth(phyloseq_data_norarify, sample.size = min_lib, verbose = FALSE, replace = TRUE)
   
   # Calculate richness
   rich <- as.numeric(as.matrix(estimate_richness(r, measures = "Observed")))
-  richness[ ,i] <- rich
-  
-  # Calculate evenness
-  even <- as.numeric(as.matrix(estimate_richness(r, measures = "InvSimpson")))
-  evenness[ ,i] <- even
-  
-  # Calculate shannon
-  shan <- as.numeric(as.matrix(estimate_richness(r, measures = "Shannon")))
-  shannon[ ,i] <- shan
-  
-  # Calculate simpson
-  simp <- as.numeric(as.matrix(estimate_richness(r, measures = "Simpson")))
-  simpson[ ,i] <- simp
-  
-  # Calculate Chao1
-  chao <- as.numeric(as.matrix(estimate_richness(r, measures = "Chao1")))
-  chao1[ ,i] <- chao
+  SR[ ,i] <- rich
 }
 
-#repeat iterations for Faith's PD, analyzed by different program
-set.seed(3)
-
-for (i in 1:100) {
-  # Subsample
-  otur <- rrarefy(t(otufile),6202)
-  
-  # Calculate Faith's PD
-  faith <- pd(otur, ep_tree, include.root=FALSE)
-  #faith <- faith[, -2]
-  faithPD[ ,i] <- faith[, -2]
-}
-
-# Create a new dataframe to hold the means and standard error of richness estimates
-SampleID <- row.names(richness)
-mean_alpha <- apply(richness, 1, mean)
-se <- apply(richness, 1, std)
+# Create a new dataframe to hold the means and standard deviations of richness estimates
+SampleID <- row.names(SR)
+SR_ave <- apply(SR, 1, mean)
+SR_se <- apply(SR, 1, ste)
 measure <- rep("Richness", nsamp)
-rich_stats <- data.frame(SampleID, mean_alpha, se, measure)
+rich_stats <- data.frame(SampleID, SR_ave, SR_se)
 
-# Create a new dataframe to hold the means and standard error of evenness estimates
-SampleID <- row.names(evenness)
-mean_alpha <- apply(evenness, 1, mean)
-se <- apply(evenness, 1, std)
-measure <- rep("Inverse Simpson", nsamp)
-even_stats <- data.frame(SampleID, mean_alpha, se, measure)
-
-# Create a new dataframe to hold the means and standard error of diversity estimates
-SampleID <- row.names(simpson)
-mean_alpha <- apply(simpson, 1, mean)
-se <- apply(simpson, 1, std)
-measure <- rep("Simpson", nsamp)
-simp_stats <- data.frame(SampleID, mean_alpha, se, measure)
-
-# Create a new dataframe to hold the means and standard error of diveristy estimates
-SampleID <- row.names(shannon)
-mean_alpha <- apply(shannon, 1, mean)
-se <- apply(shannon, 1, std)
-measure <- rep("Shannon", nsamp)
-shan_stats <- data.frame(SampleID, mean_alpha, se, measure)
-
-# Create a new dataframe to hold the means and standard error of diversity estimates
-SampleID <- row.names(chao1)
-mean_alpha <- apply(chao1, 1, mean)
-se <- apply(chao1, 1, std)
-measure <- rep("Chao1", nsamp)
-chao_stats <- data.frame(SampleID, mean_alpha, se, measure)
-
-#Calculate Faith's Phylogenetic Diversity index
-SampleID <- row.names(faithPD)
-mean_alpha <- apply(faithPD, 1, mean, na.rm=TRUE)
-se <- apply(faithPD, 1, std)
-measure <- rep("Faith_PD", nsamp)
-faith_stats <- data.frame(SampleID, mean_alpha, se, measure)
+alphadiv_meta <- cbind(SR_ave, SR_se, richness, Faith_norar = faith$PD, treat_c = meta_table$treat_c, stock = meta_table$stock, GSI = meta_table$GSI, BC = meta_table$BC, depth = meta_table$depth, treat_tank = meta_table$treat_tank)
+alphadiv_meta
+# optional write table with diversity stats
+#write.table(alphadiv_meta, file = "alphadiv_meta.txt", sep = "\t")
 
 
-#combine your stats and export tables
+#to actually test correlations between all fields in the diversity table
+#filter samples by subset function prior to correlation check
+alphadiv <- cbind(SR_ave, SR_se, richness, Faith_norar = faith$PD, GSI = meta_table$GSI, BC = meta_table$BC, depth = meta_table$depth)
+alphadiv_mat <- as.matrix(alphadiv)
+alphacorr <- rcorr(alphadiv_mat)
+alphacorr
 
-alpha <- rbind(rich_stats, even_stats, simp_stats, shan_stats, faith_stats)
-
-s <- data.frame(sample_data(microB_subset_norarify))
-alphadiv <- merge(alpha, s, by = "SampleID") 
-
-write.csv(alphadiv, "alphadiv.csv")
-
-#chao_stats contains both means and variances based on the initial calculation of chao1, therefore we need to export separate since it is not a 1:1 join with n samples.
-#be cautious with how you treat means and se of the original chao1 se calculations.  They may be meaningless depending on your goals.
-#chao1 mean stats are written first, followed by se calculations
-write.csv(chao_stats, "chao1.csv")
 
 ############################################################
 # Run ANOVA or Kruskal-Wallis test whether alpha diversity # 
 # and BC/GSI stats differ among treatment groups           #
 ############################################################
 
-rich2 <- data.frame(merge(rich_stats, s, by = "SampleID"))
-even2 <- data.frame(merge(even_stats, s, by = "SampleID"))
-simp2 <- data.frame(merge(simp_stats, s, by = "SampleID"))
-shan2 <- data.frame(merge(shan_stats, s, by = "SampleID"))
-faith2 <- data.frame(merge(faith_stats, s, by = "SampleID"))
-
 #test assumptions of normality for ANOVAs
-shapiro.test(shan2$mean_alpha)
-shapiro.test(simp2$mean_alpha)
-shapiro.test(even2$mean_alpha)
-shapiro.test(rich2$mean_alpha)
-shapiro.test(faith2$mean_alpha)
+shapiro.test(alphadiv$SR_ave)
+shapiro.test(alphadiv$Shannon)
+shapiro.test(alphadiv$Faith_norar)
 shapiro.test(shan2$GSI)
 shapiro.test(shan2$BC)
 
 #test assumptions of equal variances for ANOVAs
-bartlett.test(shan2$mean_alpha, shan2$treat_c)
-bartlett.test(simp2$mean_alpha, simp2$treat_c)
-bartlett.test(even2$mean_alpha, even2$treat_c)
-bartlett.test(rich2$mean_alpha, rich2$treat_c)
-bartlett.test(faith2$mean_alpha, faith2$treat_c)
-bartlett.test(shan2$GSI, shan2$treat_c)
-bartlett.test(shan2$BC, shan2$treat_c)
+bartlett.test(alphadiv_meta$SR_ave, alphadiv_meta$treat_c)
+bartlett.test(alphadiv_meta$Shannon, alphadiv_meta$treat_c)
+bartlett.test(alphadiv_meta$Faith_norar, alphadiv_meta$treat_c)
+bartlett.test(alphadiv_meta$GSI, alphadiv_meta$treat_c)
+bartlett.test(alphadiv_meta$BC, alphadiv_meta$treat_c)
 
-#Run parametric ANOVA tests
-fit <- aov(mean_alpha ~ treat_c, data=rich2)
+#Run parametric ANOVA tests if assumptions are met
+fit <- aov(SR_ave ~ treat_c, data=alphadiv_meta)
 summary(fit)
 
-fit <- aov(mean_alpha ~ treat_c, data=even2)
+fit <- aov(Shannon ~ treat_c, data=alphadiv_meta)
 summary(fit)
 
-fit <- aov(mean_alpha ~ treat_c, data=simp2)
+fit <- aov(Faith_norar ~ treat_c, data=alphadiv_meta)
 summary(fit)
 
-fit <- aov(mean_alpha ~ treat_c, data=shan2)
+fit <- aov(GSI ~ treat_c, data=alphadiv_meta)
 summary(fit)
 
-fit <- aov(mean_alpha ~ treat_c, data=faith2)
-summary(fit)
-
-fit <- aov(GSI ~ treat_c, data=shan2)
-summary(fit)
-
-fit <- aov(BC ~ treat_c, data=shan2)
+fit <- aov(BC ~ treat_c, data=alphadiv_meta)
 summary(fit)
 
 #If diversity index doesn't meet data distribution assumptions for parametric ANOVA or T-Tests, use non-parametric Kruskal-Wallis test
-fit <- kruskal.test(mean_alpha ~ treat_c, data=rich2)
+fit <- kruskal.test(SR_ave ~ treat_c, data=alphadiv_meta)
 fit
 
-fit <- kruskal.test(mean_alpha ~ treat_c, data=even2)
+fit <- kruskal.test(Shannon ~ treat_c, data=alphadiv_meta)
 fit
 
-fit <- kruskal.test(mean_alpha ~ treat_c, data=simp2)
+fit <- kruskal.test(Faith_norar ~ treat_c, data=alphadiv_meta)
 fit
 
-fit <- kruskal.test(mean_alpha ~ treat_c, data=shan2)
+fit <- kruskal.test(GSI ~ treat_c, data=alphadiv_meta)
 fit
 
-fit <- kruskal.test(mean_alpha ~ treat_c, data=faith2)
-fit
-
-fit <- kruskal.test(GSI ~ treat_c, data=shan2)
-fit
-
-fit <- kruskal.test(BC ~ treat_c, data=shan2)
+fit <- kruskal.test(BC ~ treat_c, data=alphadiv_meta)
 fit
 
 # Run parametric pairwise tests to see specifically which groups differ
-# Follow-up for ANOVA
-fit <- pairwise.t.test(rich2$mean_alpha, rich2$treat_c, p.adj = "fdr")
+# Follow-up for ANOVA if assumption met
+fit <- pairwise.t.test(alphadiv_meta$SR_ave, alphadiv_meta$treat_c, p.adj = "fdr")
 fit
 
-fit <- pairwise.t.test(even2$mean_alpha, even2$treat_c, p.adj = "fdr")
+fit <- pairwise.t.test(alphadiv_meta$Shannon, alphadiv_meta$treat_c, p.adj = "fdr")
 fit
 
-fit <- pairwise.t.test(simp2$mean_alpha, simp2$treat_c, p.adj = "fdr")
+fit <- pairwise.t.test(alphadiv_meta$Faith_norar, alphadiv_meta$treat_c, p.adj = "fdr")
 fit
 
-fit <- pairwise.t.test(shan2$mean_alpha, shan2$treat_c, p.adj = "fdr")
+fit <- pairwise.t.test(alphadiv_meta$GSI, alphadiv_meta$treat_c, p.adj = "fdr")
 fit
 
-fit <- pairwise.t.test(faith2$mean_alpha, faith2$treat_c, p.adj = "fdr")
-fit
-
-fit <- pairwise.t.test(shan2$GSI, shan2$treat_c, p.adj = "fdr")
-fit
-
-fit <- pairwise.t.test(shan2$BC, shan2$treat_c, p.adj = "fdr")
+fit <- pairwise.t.test(alphadiv_meta$BC, alphadiv_meta$treat_c, p.adj = "fdr")
 fit
 
 # Run non-parametric pairwise tests to see specifically which groups differ
 # Follow up for Kruskal-Wallis
-fit <- pairwise.wilcox.test(rich2$mean_alpha, rich2$treat_c, p.adj = "fdr")
+fit <- pairwise.wilcox.test(alphadiv_meta$SR_ave, alphadiv_meta$treat_c, p.adj = "fdr")
 fit
 
-fit <- pairwise.wilcox.test(even2$mean_alpha, even2$treat_c, p.adj = "fdr")
+fit <- pairwise.wilcox.test(alphadiv_meta$Shannon, alphadiv_meta$treat_c, p.adj = "fdr")
 fit
 
-fit <- pairwise.wilcox.test(simp2$mean_alpha, simp2$treat_c, p.adj = "fdr")
+fit <- pairwise.wilcox.test(alphadiv_meta$Faith_norar, alphadiv_meta$treat_c, p.adj = "fdr")
 fit
 
-fit <- pairwise.wilcox.test(shan2$mean_alpha, shan2$treat_c, p.adj = "fdr")
+fit <- pairwise.wilcox.test(alphadiv_meta$GSI, alphadiv_meta$treat_c, p.adj = "fdr")
 fit
 
-fit <- pairwise.wilcox.test(faith2$mean_alpha, faith2$treat_c, p.adj = "fdr")
-fit
-
-fit <- pairwise.wilcox.test(shan2$GSI, shan2$treat_c, p.adj = "fdr")
-fit
-
-fit <- pairwise.wilcox.test(shan2$BC, shan2$treat_c, p.adj = "fdr")
+fit <- pairwise.wilcox.test(alphadiv_meta$BC, alphadiv_meta$treat_c, p.adj = "fdr")
 fit
 
 #comparison and plotting of GSI and body condition among groups
@@ -882,13 +750,13 @@ fullmeta <- read.csv("phyloseq_meta_small_SILVA.csv", sep = ",", header = TRUE, 
 #fullmeta <- subset(fullmeta, stock == "WS")
 
 #find mean, se for BC
-AVG<-aggregate(BC ~ treat_c , fullmeta, mean, na.rm = T) 
-SE<-aggregate(BC ~ treat_c, fullmeta, std) 
+AVG<-aggregate(BC ~ treat_c , alphadiv_meta, mean, na.rm = T) 
+SE<-aggregate(BC ~ treat_c, alphadiv_meta, ste) 
 BC <- data.frame(merge(AVG, SE, by = "treat_c"))
 
 #find mean, se for GSI
-AVG<-aggregate(GSI ~ treat_c , fullmeta, mean, na.rm = T) 
-SE<-aggregate(GSI ~ treat_c , fullmeta, std) 
+AVG<-aggregate(GSI ~ treat_c , alphadiv_meta, mean, na.rm = T) 
+SE<-aggregate(GSI ~ treat_c , alphadiv_meta, ste) 
 GSI <- data.frame(merge(AVG, SE, by = "treat_c"))
 
 ggplot(BC, aes(x=factor(treat_c), y=BC.x)) + 
@@ -903,45 +771,59 @@ ggplot(GSI, aes(x=factor(treat_c), y=GSI.x)) +
                 width=0.2,                    # Width of the error bars
                 position=position_dodge(.9))
 
-#Explore with full dataset the pairwise differences from BC and GSI
+#Explore with full dataset the pairwise differences from BC and GSI,
+#valid if previous parametric assumptions are met
 fit <- pairwise.t.test(fullmeta$BC, fullmeta$treat_c, p.adj = "bonf")
 fit
-
 fit <- pairwise.t.test(fullmeta$GSI, fullmeta$treat_c, p.adj = "bonf")
 fit
 
+#if parametric assumptions are not met, use these
 fit <- pairwise.wilcox.test(fullmeta$GSI, fullmeta$treat_c, p.adj = "fdr")
 fit
-
 fit <- pairwise.wilcox.test(fullmeta$BC, fullmeta$treat_c, p.adj = "fdr")
 fit
 
 # Report summary stats for Alpha-Div and Physiological stats of interest
-#find mean, se for richness
-AVG<-aggregate(mean_alpha ~ treat_c , rich2, mean, na.rm = T) 
-SE<-aggregate(mean_alpha ~ treat_c , rich2, std) 
+#find mean, se for rarefied richness
+AVG<-aggregate(SR_ave ~ treat_c , alphadiv_meta, mean, na.rm = T) 
+SE<-aggregate(SR_ave ~ treat_c , alphadiv_meta, ste) 
 rich_summary <- data.frame(merge(AVG, SE, by = "treat_c"))
 rich_summary
 
+#find mean, se for unrarefied richness
+AVG<-aggregate(Observed ~ treat_c , alphadiv_meta, mean, na.rm = T) 
+SE<-aggregate(Observed ~ treat_c , alphadiv_meta, ste) 
+Observed_summary <- data.frame(merge(AVG, SE, by = "treat_c"))
+Observed_summary
+
 #find mean, se for shannon index
-AVG<-aggregate(mean_alpha ~ treat_c , shan2, mean, na.rm = T) 
-SE<-aggregate(mean_alpha ~ treat_c , shan2, std) 
+AVG<-aggregate(Shannon ~ treat_c , alphadiv_meta, mean, na.rm = T) 
+SE<-aggregate(Shannon ~ treat_c , alphadiv_meta, ste) 
 shan_summary <- data.frame(merge(AVG, SE, by = "treat_c"))
 shan_summary
 
 #find mean, se for Faith's PD
-AVG<-aggregate(mean_alpha ~ treat_c , faith2, mean, na.rm = T) 
-SE<-aggregate(mean_alpha ~ treat_c , faith2, std) 
+AVG<-aggregate(Faith_norar ~ treat_c , alphadiv_meta, mean, na.rm = T) 
+SE<-aggregate(Faith_norar ~ treat_c , alphadiv_meta, ste) 
 faith_summary <- data.frame(merge(AVG, SE, by = "treat_c"))
 faith_summary
 
-#Create boxplot for Faith's PD calculated through Picante on rarified dataset
-otur <- rrarefy(t(otufile),6202)
-faith <- pd(otur, ep_tree, include.root=FALSE)
-faith <- data.frame(faith, mapfile$SampleID, mapfile$treat_c )
+
+#Plot rarefied species richness
+ggplot(alphadiv_meta, aes(x = treat_c, y = SR_ave, group = treat_c)) + 
+  geom_boxplot()
+
+#Plot unrarefied species richness
+ggplot(alphadiv_meta, aes(x = treat_c, y = Observed, group = treat_c)) + 
+  geom_boxplot()
+
+#Plot Shannon Index
+ggplot(alphadiv_meta, aes(x = treat_c, y = Shannon, group = treat_c)) + 
+  geom_boxplot()
 
 #Plot faith's PD (and SR calculated through Picante)
-ggplot(faith, aes(x = mapfile.treat_c, y = PD, group = mapfile.treat_c)) + 
+ggplot(alphadiv_meta, aes(x = treat_c, y = Faith_norar, group = treat_c)) + 
   geom_boxplot()
 
 
@@ -969,7 +851,6 @@ otu <- otu_table(t(otur), taxa_are_rows = TRUE)  # transpose back just to use co
 
 #Import unrooted 16S tree for OTUs created by FastTree
 pf_tree<-read.tree("filtered_seqs_min5_otus_SILVAannot_fasttree.tre")  # must be an unrooted tree for phylofactor
-
 
 #Import metadata, specifically with the stock and treatment categorizations of samples
 mapfile <- read.csv("phyloseq_meta_small_SILVA.csv", sep = ",", header = TRUE, row.names=1)
@@ -1137,14 +1018,27 @@ phylo.heatmap(pf_tree,clr(prediction),colors=colors, fsize=0.5)
 
 #Bar plots for microbiome composition per individal, per treatment, and per treatment grouped by phylum respectively
 #Change taxonomic level or variable as desired for exploration of data
+#This section contains many different versions of the same plots using default and manual color scales
+
+#Plot rarefied data
 plot_bar(phyloseq_data, fill="Phylum")
+plot_bar(phyloseq_data, fill="Phylum") + scale_fill_manual(values = c("#FF4500", "#F5DEB3", "#FFA500", "#008000", "#00CED1", "#8B4513", "#FFB6C1", "#DAA520", "#800080", "#664e1c", "#98FB98", "#FF6347", "#9370DB", "#1a0e8a", "#696969", "#f56cb5", "#d13838", "#0000FF", "#B0C4DE", "#FFD700", "#008080", "#C71585"))
+plot_bar(phyloseq_data, fill="Phylum") + scale_fill_manual(values = colorRampPalette(brewer.pal(12, "Paired"))(colourCount))
 plot_bar(phyloseq_data, "treat_c", fill="Phylum")
 plot_bar(phyloseq_data, "treat_c", fill="treat_c", facet_grid=~Phylum)
 
+#Plot rarefied data after merging taxa counts from same Phylum (less busy plot)
+phylumGlommed = tax_glom(phyloseq_data, "Phylum")
+plot_bar(phylumGlommed, fill ="Phylum")
+plot_bar(phylumGlommed, fill ="Phylum") + scale_fill_manual(values = colorRampPalette(brewer.pal(12, "Paired"))(colourCount))
+plot_bar(phylumGlommed, fill ="Phylum") + scale_fill_manual(values = c("#FF4500", "#F5DEB3", "#FFA500", "#008000", "#00CED1", "#8B4513", "#FFB6C1", "#DAA520", "#800080", "#664e1c", "#98FB98", "#FF6347", "#9370DB", "#1a0e8a", "#696969", "#f56cb5", "#d13838", "#0000FF", "#B0C4DE", "#FFD700", "#008080", "#C71585"))
+
+#Plot VST data
 plot_bar(phyloseq_data_ds2, fill="Phylum")
 plot_bar(phyloseq_data_ds2, "treat_c", fill="Phylum")
 plot_bar(phyloseq_data_ds2, "treat_c", fill="treat_c", facet_grid=~Phylum)
 
+#Plot unrarefied data
 plot_bar(phyloseq_data_norarify, fill="Phylum")
 plot_bar(phyloseq_data_norarify, "treat_c", fill="Phylum")
 plot_bar(phyloseq_data_norarify, "treat_c", facet_grid=~Phylum)
@@ -1156,7 +1050,6 @@ phyloseq_data_ds3 = transform_sample_counts(phyloseq_data_ds3, function(x) 100 *
 #remove lines from barplot
 p = plot_bar(phyloseq_data_ds3, fill="Phylum")
 p + geom_bar(aes(color=Phylum, fill=Phylum), stat = "identity", position="stack")
-
 
 #Transform to make proportion within treatments from rarified data
 phyloseq_data_3 = merge_samples(phyloseq_data, "treat_c")
